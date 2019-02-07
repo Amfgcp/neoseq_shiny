@@ -1,19 +1,23 @@
 library(shiny)
+library(dplyr)
 #library(shinyFiles) #this library is used, but does not need to be loaded since we only call it via shinyFiles::[function]
 
 ui = fluidPage(
-  #titlePanel("Hello Shiny!"),
-
   sidebarLayout(
     sidebarPanel(
       #folder input. Creates the input button with some informative texts. 
-      p(style = "font-size: 96%; font-weight: bold;", "Select folder:"),
+      p(style = "font-size: 105%; font-weight: bold;", "Select folder:"),
       shinyFiles::shinyDirButton("dir", "Browse...", "Select folder"), #this function is coupled to shinyDirChoose in the server section.
-      textOutput("selected.folder", inline = T) #states the currently selected folder
+      textOutput("selected.folder", inline = T), #states the currently selected folder
+      
+      #lists the names of the .bam files found in the x-week-y folder.
+      uiOutput("choose_sample", style = "margin-top: 20px;")
     ),
     
     mainPanel(
-      textOutput("folder")
+      tableOutput("table1"),
+      #htmlOutput("table2")
+      tableOutput("table2")
     )
   )
 )
@@ -36,34 +40,92 @@ server = function(input, output, session) {
     #input$dir only returns a second variable if a folder is selected
     if(!is.na(input$dir[2])){
       folder.info$path <- shinyFiles::parseDirPath(roots, input$dir) #this location needs to be specified alot of times, so we save it here
-     
-      #list all content
-      folder.info$content = list.files(folder.info$path)#, pattern = ".vcf$")
-      #folder.info$n = length(folder.info$content)
+      
+      folder.info$content = list.files(folder.info$path)
+      #collect the various sample names from the x-week-y folder
+      week.folder = paste0(folder.info$path, "/", folder.info$content[grep("week", folder.info$content)])
+      folder.info$vcf = sub(".vcf", "",
+        list.files(week.folder, pattern = ".vcf$")
+      )
+      folder.info$bam = sub(".bam", "",
+        list.files(week.folder, pattern = ".bam$")
+      )
+      
+      #aggregate all unique names in this folder, regardless of file type
+      folder.info$samples = unique(
+        gsub("-unaligned", "", 
+             gsub("\\..*","",
+                  list.files(c(week.folder, paste0(folder.info$path, "/originals")))
+      )))
+      
+      #collect the sample names from the /originals folder
+      folder.info$unaligned.samples = sub("-unaligned.bam", "",
+                                          list.files(paste0(folder.info$path, "/originals"), pattern = ".bam$")
+      )
+      #check presence of standard files. Returns TRUE or FALSE
+      folder.info$QCsample = file.exists(paste0(folder.info$path, "/QCsample.html"))
+      folder.info$coverage = file.exists(paste0(folder.info$path, "/Coverage.txt"))
+      folder.info$gender   = file.exists(paste0(folder.info$path, "/gender.txt"))
+      folder.info$NGSE     = file.exists(paste0(folder.info$path, "/NGSE.html"))
+      folder.info$igv      = file.exists(paste0(folder.info$path, "/igv_session.xml"))
     }
   )
   
   
   
   #########################################################
-  # folder output
+  # Sidebar
   #########################################################
   
   #states the currently selected folder
   output$selected.folder <- renderPrint(
-    #input$dir only returns a second variable if a folder is selected
     if(!is.na(input$dir[2]))cat("Selected folder: ", folder.info$path) else cat("No folder selected")
   )
   
-  #prints the names of all files and folders in the selected folder
-  output$folder <- renderText({
-    folder.info$content
+  #lists the names of the .bam files found in the x-week-y folder.
+  output$choose_sample <- renderUI(if(!is.na(input$dir[2])){
+    radioButtons(
+      inputId = "sampleselect",   #This does not do anything (yet).
+      label = "Samples",
+      choices = folder.info$samples
+    )
   })
   
   
   
   #########################################################
-  # other
+  # Mainpanel 
+  #########################################################
+  
+  output$table1 <- renderTable(if(!is.na(input$dir[2])){
+    tibble(
+      "QCsample" = folder.info$QCsample, 
+      "Coverage" = folder.info$coverage, 
+      "gender" = folder.info$gender, 
+      "NGSE" = folder.info$NGSE, 
+      "igv" = folder.info$igv
+      )
+  })
+  
+  output$table2 <- renderTable(if(!is.na(input$dir[2])){
+    t = tibble(
+      "sample" = folder.info$samples,
+      "unaligned.bam" = NA,
+      "bam" = NA,
+      "vcf" = NA
+    ) %>%
+      mutate(
+        #unaligned.bam = ifelse(sample %in% folder.info$unaligned.samples, HTML("<p>&#10004;</p>"), HTML("<p>&times;</p>")),
+        unaligned.bam = sample %in% folder.info$unaligned.samples,
+        bam = sample %in% folder.info$bam,
+        vcf = sample %in% folder.info$vcf
+      )
+  })
+  
+  
+  
+  #########################################################
+  # Other
   #########################################################
   
   #terminate this app when the browser window is closed.
