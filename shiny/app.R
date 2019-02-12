@@ -16,6 +16,7 @@ ui = fluidPage(
     ),
     
     mainPanel(
+      uiOutput("title", style = "margin-left: 30px; margin-top: 15px; margin-bottom: 20px;"),
       tableOutput("table1"),
       tableOutput("table2")
     )
@@ -99,6 +100,10 @@ server = function(input, output, session) {
   checklist = function(x){
     ifelse(x, "<font color=green>&#10004;</font>", "<font color=red>&times;</font>")
   }
+  
+  output$title <- renderPrint(
+    if(go())gsub("..*/", "", folder.info$path)
+  )
   
   output$table1 <- renderTable(if(go()){
     tibble(
