@@ -1,5 +1,6 @@
 library(shiny)
 library(dplyr)
+library(xtable) #to make html work in the tables. Doesn't work with xtable::
 #library(shinyFiles) #this library is used, but does not need to be loaded since we only call it via shinyFiles::[function]
 
 ui = fluidPage(
@@ -16,7 +17,6 @@ ui = fluidPage(
     
     mainPanel(
       tableOutput("table1"),
-      #htmlOutput("table2")
       tableOutput("table2")
     )
   )
@@ -33,43 +33,41 @@ server = function(input, output, session) {
   
   #2) use the named list to allow users to select a folder. This function is coupled to shinyDirButton in the ui section.
   shinyFiles::shinyDirChoose(input, 'dir',  updateFreq = 0, roots = roots, defaultRoot = "demo_location")
+  go = reactive(!is.na(input$dir[2])) #True when a folder has been selected
   
   #3) harvest data from the user's selected folder
-  folder.info <- reactiveValues() #all data will be stored in this reactiveValues object.
-  observeEvent(input$dir, #priority = 2,
-    #input$dir only returns a second variable if a folder is selected
-    if(!is.na(input$dir[2])){
-      folder.info$path <- shinyFiles::parseDirPath(roots, input$dir) #this location needs to be specified alot of times, so we save it here
-      
-      folder.info$content = list.files(folder.info$path)
-      #collect the various sample names from the x-week-y folder
-      week.folder = paste0(folder.info$path, "/", folder.info$content[grep("week", folder.info$content)])
-      folder.info$vcf = sub(".vcf", "",
-        list.files(week.folder, pattern = ".vcf$")
-      )
-      folder.info$bam = sub(".bam", "",
-        list.files(week.folder, pattern = ".bam$")
-      )
-      
-      #aggregate all unique names in this folder, regardless of file type
-      folder.info$samples = unique(
-        gsub("-unaligned", "", 
-             gsub("\\..*","",
-                  list.files(c(week.folder, paste0(folder.info$path, "/originals")))
-      )))
-      
-      #collect the sample names from the /originals folder
-      folder.info$unaligned.samples = sub("-unaligned.bam", "",
-                                          list.files(paste0(folder.info$path, "/originals"), pattern = ".bam$")
-      )
-      #check presence of standard files. Returns TRUE or FALSE
-      folder.info$QCsample = file.exists(paste0(folder.info$path, "/QCsample.html"))
-      folder.info$coverage = file.exists(paste0(folder.info$path, "/Coverage.txt"))
-      folder.info$gender   = file.exists(paste0(folder.info$path, "/gender.txt"))
-      folder.info$NGSE     = file.exists(paste0(folder.info$path, "/NGSE.html"))
-      folder.info$igv      = file.exists(paste0(folder.info$path, "/igv_session.xml"))
+  folder.info <- reactiveValues()
+  observeEvent(input$dir, if(go()){
+    folder.info$path <- shinyFiles::parseDirPath(roots, input$dir)
+    folder.info$content = list.files(folder.info$path)
+    #collect the various sample names from the x-week-y folder
+    week.folder = paste0(folder.info$path, "/", folder.info$content[grep("week", folder.info$content)])
+    folder.info$vcf = sub(".vcf", "",
+      list.files(week.folder, pattern = ".vcf$")
+    )
+    folder.info$bam = sub(".bam", "",
+      list.files(week.folder, pattern = ".bam$")
+    )
+    #aggregate all unique sample names in this folder and the originals subfolder, regardless of file type
+    folder.info$samples = unique(
+      gsub("-unaligned", "", 
+           gsub("\\..*","",
+                list.files(c(week.folder, paste0(folder.info$path, "/originals")))
+    )))
+    #collect the sample names from the /originals folder
+    folder.info$unaligned.samples = sub("-unaligned.bam", "",
+      list.files(paste0(folder.info$path, "/originals"), pattern = ".bam$")
+    )
+    #check presence of standard files. Returns TRUE or FALSE
+    checkfile = function(x){
+      file.exists(paste0(folder.info$path, x))
     }
-  )
+    folder.info$QCsample = checkfile("/QCsample.html")
+    folder.info$coverage = checkfile("/Coverage.txt")
+    folder.info$gender   = checkfile("/gender.txt")
+    folder.info$NGSE     = checkfile("/NGSE.html")
+    folder.info$igv      = checkfile("/igv_session.xml")
+  })
   
   
   
@@ -79,11 +77,11 @@ server = function(input, output, session) {
   
   #states the currently selected folder
   output$selected.folder <- renderPrint(
-    if(!is.na(input$dir[2]))cat("Selected folder: ", folder.info$path) else cat("No folder selected")
+    if(go())cat("Selected folder: ", folder.info$path) else cat("No folder selected")
   )
   
   #lists the names of the .bam files found in the x-week-y folder.
-  output$choose_sample <- renderUI(if(!is.na(input$dir[2])){
+  output$choose_sample <- renderUI(if(go()){
     radioButtons(
       inputId = "sampleselect",   #This does not do anything (yet).
       label = "Samples",
@@ -97,30 +95,29 @@ server = function(input, output, session) {
   # Mainpanel 
   #########################################################
   
-  output$table1 <- renderTable(if(!is.na(input$dir[2])){
-    tibble(
-      "QCsample" = folder.info$QCsample, 
-      "Coverage" = folder.info$coverage, 
-      "gender" = folder.info$gender, 
-      "NGSE" = folder.info$NGSE, 
-      "igv" = folder.info$igv
-      )
-  })
+  #custom function to change logic output to a green tick or red cross
+  checklist = function(x){
+    ifelse(x, "<font color=green>&#10004;</font>", "<font color=red>&times;</font>")
+  }
   
-  output$table2 <- renderTable(if(!is.na(input$dir[2])){
-    t = tibble(
-      "sample" = folder.info$samples,
-      "unaligned.bam" = NA,
-      "bam" = NA,
-      "vcf" = NA
-    ) %>%
-      mutate(
-        #unaligned.bam = ifelse(sample %in% folder.info$unaligned.samples, HTML("<p>&#10004;</p>"), HTML("<p>&times;</p>")),
-        unaligned.bam = sample %in% folder.info$unaligned.samples,
-        bam = sample %in% folder.info$bam,
-        vcf = sample %in% folder.info$vcf
+  output$table1 <- renderTable(if(go()){
+    tibble(
+      "QCsample" = checklist(folder.info$QCsample),
+      "Coverage" = checklist(folder.info$coverage),
+      "gender" = checklist(folder.info$gender),
+      "NGSE" = checklist(folder.info$NGSE),
+      "igv" = checklist(folder.info$igv)
       )
-  })
+  }, sanitize.text.function = function(x) x) #this line makes HTML work in the table
+  
+  output$table2 <- renderTable(if(go()){
+    tibble("sample" = folder.info$samples) %>%
+      mutate(
+        unaligned.bam = checklist(sample %in% folder.info$unaligned.samples),
+        bam = checklist(sample %in% folder.info$bam),
+        vcf = checklist(sample %in% folder.info$vcf)
+      )
+  }, sanitize.text.function = function(x) x)
   
   
   
