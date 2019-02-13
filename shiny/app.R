@@ -2,6 +2,7 @@ library(shiny)
 library(dplyr)
 library(xtable) #to make html work in the tables. Doesn't work with xtable::
 #library(shinyFiles) #this library is used, but does not need to be loaded since we only call it via shinyFiles::[function]
+#library(stringdist) #for ClosestMatch2's amatch
 
 ui = fluidPage(
   sidebarLayout(
@@ -19,12 +20,21 @@ ui = fluidPage(
       uiOutput("title", style = "margin-left: 30px; margin-top: 15px; margin-bottom: 20px;"),
       tabsetPanel(
         tabPanel(
-          "tab 1",
-          tableOutput("table1"),
-          tableOutput("table2")
+          "Overview",
+          tableOutput("table1")#,
+          #tableOutput("table2")
         ),
         tabPanel(
-          "tab 2"
+          ".bam files"
+        ),
+        tabPanel(
+          ".vcf files"
+        ),
+        tabPanel(
+          "RNAseq"
+        ),
+        tabPanel(
+          "HLA plots"
         )
       )
     )
@@ -37,7 +47,7 @@ server = function(input, output, session) {
   #########################################################
   
   #1) create a named list of places where users can start searching
-  roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "O:/Transfer/Siebren/17-CHPv4c_week5run3-NORMALStest2")
+  roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "O:/Transfer/Siebren/neoSeq")
   names(roots) <- c(roots[1:(length(roots)-2)], getwd(), "demo_location")
   
   #2) use the named list to allow users to select a folder. This function is coupled to shinyDirButton in the ui section.
@@ -46,17 +56,74 @@ server = function(input, output, session) {
   
   #3) harvest data from the user's selected folder
   folder.info <- reactiveValues()
+  
   observeEvent(input$dir, if(go()){
     folder.info$path <- shinyFiles::parseDirPath(roots, input$dir)
-    folder.info$content = list.files(folder.info$path)
+    
+    #list of samples
+    TNsamples = sub("_L..*", "",
+      list.files(paste0(folder.info$path, "/fastq"), pattern = ".fastq.gz$")
+    )
+    folder.info$samples = unique(substr(TNsamples,1,nchar(TNsamples)-1))
+    
+    #list of bam samples
+    folder.info$bam = tibble(sample = folder.info$samples) %>%
+      mutate(
+       normal = file.exists(paste0(folder.info$path, "/bam/", sample, "N.dedup.recal.bam")),
+       tumor = file.exists(paste0(folder.info$path, "/bam/", sample, "T.dedup.recal.bam")),
+       both = normal & tumor
+      )
+    
+    #list of vcf samples
+    folder.info$vcf = sub("_CombineVariants.vcf", "",
+      list.files(paste0(folder.info$path, "/vcf"), pattern = ".vcf$")
+    )
+    
+    #list of RNAseq samples
+    intersect2 <- function (x, y){
+      y <- as.vector(y)
+      y[match(as.vector(x), y, 0L)]
+    }
+    common.element.in.all.sample.names = paste(Reduce(intersect2, strsplit(folder.info$samples, NULL)), collapse = '')
+
+    ClosestMatch2 = function(string, stringVector){
+      stringVector[stringdist::amatch(string, stringVector, maxDist=Inf)]
+    }
+    all.RNAseq.folders = list.files(paste0(folder.info$path, "/RNAseq/"))
+    our.RNAseq.folder = ClosestMatch2(common.element.in.all.sample.names, all.RNAseq.folders)
+    
+    folder.info$RNAseq = tibble(sample = folder.info$samples) %>%
+      mutate(
+        normal = file.exists(paste0(folder.info$path, "/RNAseq/", our.RNAseq.folder, "/samples/", sample, "N/lib_rna/", sample, "N-rna.dedup.bam")),
+        tumor = file.exists(paste0(folder.info$path, "/RNAseq/", our.RNAseq.folder, "/samples/", sample, "T/lib_rna/", sample, "T-rna.dedup.bam")),
+        both = normal & tumor
+      )
+    
+    #list of HLA plots
+    folder.info$HLA = tibble(sample = folder.info$samples) %>%
+      mutate(
+        normal_coverage = file.exists(paste0(folder.info$path, "/HLA/plots/", sample, "N_coverage_plot.pdf")),
+        tumor_coverage = file.exists(paste0(folder.info$path, "/HLA/plots/", sample, "T_coverage_plot.pdf")),
+        both_coverage = normal_coverage & tumor_coverage,
+        
+        normal_rna = file.exists(paste0(folder.info$path, "/HLA/plots/", sample, "N-rna_coverage_plot.pdf")),
+        tumor_rna = file.exists(paste0(folder.info$path, "/HLA/plots/", sample, "T-rna_coverage_plot.pdf")),
+        both_rna = normal_rna & tumor_rna
+      )
+    
+    
+    
+
+    
+    #folder.info$content = list.files(folder.info$path)
     #collect the various sample names from the x-week-y folder
-    week.folder = paste0(folder.info$path, "/", folder.info$content[grep("week", folder.info$content)])
-    folder.info$vcf = sub(".vcf", "",
-      list.files(week.folder, pattern = ".vcf$")
-    )
-    folder.info$bam = sub(".bam", "",
-      list.files(week.folder, pattern = ".bam$")
-    )
+    #week.folder = paste0(folder.info$path, "/", folder.info$content[grep("week", folder.info$content)])
+    #folder.info$vcf = sub(".vcf", "",
+    #  list.files(week.folder, pattern = ".vcf$")
+    #)
+    #folder.info$bam = sub(".bam", "",
+    #  list.files(week.folder, pattern = ".bam$")
+    #)
     ##aggregate all unique sample names in this folder and the originals subfolder, regardless of file type
     #folder.info$samples = unique(
     #  gsub("-unaligned", "", 
@@ -64,18 +131,20 @@ server = function(input, output, session) {
     #            list.files(c(week.folder, paste0(folder.info$path, "/originals")))
     #)))
     #collect the sample names from the /originals folder
-    folder.info$samples = sub("-unaligned.bam", "",
-      list.files(paste0(folder.info$path, "/originals"), pattern = ".bam$")
-    )
+    #folder.info$samples = sub("-unaligned.bam", "",
+    #  list.files(paste0(folder.info$path, "/originals"), pattern = ".bam$")
+    #)
+    
     #check presence of standard files. Returns TRUE or FALSE
-    checkfile = function(x){
-      file.exists(paste0(folder.info$path, x))
-    }
-    folder.info$QCsample = checkfile("/QCsample.html")
-    folder.info$coverage = checkfile("/Coverage.txt")
-    folder.info$gender   = checkfile("/gender.txt")
-    folder.info$NGSE     = checkfile("/NGSE.html")
-    folder.info$igv      = checkfile("/igv_session.xml")
+    #checkfile = function(path, file){
+    #  file.exists(paste0(path, file))
+    #}
+    
+    #folder.info$QCsample = checkfile("/QCsample.html")
+    #folder.info$coverage = checkfile("/Coverage.txt")
+    #folder.info$gender   = checkfile("/gender.txt")
+    #folder.info$NGSE     = checkfile("/NGSE.html")
+    #folder.info$igv      = checkfile("/igv_session.xml")
   })
   
   
@@ -104,14 +173,14 @@ server = function(input, output, session) {
   # Mainpanel 
   #########################################################
   
+  output$title <- renderPrint(
+    if(go())gsub("..*/", "", folder.info$path)
+  )
+  
   #custom function to change logic output to a green tick or red cross
   checklist = function(x){
     ifelse(x, "<font color=green>&#10004;</font>", "<font color=red>&times;</font>")
   }
-  
-  output$title <- renderPrint(
-    if(go())gsub("..*/", "", folder.info$path)
-  )
   
   output$table1 <- renderTable(if(go()){
     tibble(
