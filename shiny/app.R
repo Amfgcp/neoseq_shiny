@@ -17,8 +17,16 @@ ui = fluidPage(
     
     mainPanel(
       uiOutput("title", style = "margin-left: 30px; margin-top: 15px; margin-bottom: 20px;"),
-      tableOutput("table1"),
-      tableOutput("table2")
+      tabsetPanel(
+        tabPanel(
+          "tab 1",
+          tableOutput("table1"),
+          tableOutput("table2")
+        ),
+        tabPanel(
+          "tab 2"
+        )
+      )
     )
   )
 )
@@ -49,14 +57,14 @@ server = function(input, output, session) {
     folder.info$bam = sub(".bam", "",
       list.files(week.folder, pattern = ".bam$")
     )
-    #aggregate all unique sample names in this folder and the originals subfolder, regardless of file type
-    folder.info$samples = unique(
-      gsub("-unaligned", "", 
-           gsub("\\..*","",
-                list.files(c(week.folder, paste0(folder.info$path, "/originals")))
-    )))
+    ##aggregate all unique sample names in this folder and the originals subfolder, regardless of file type
+    #folder.info$samples = unique(
+    #  gsub("-unaligned", "", 
+    #       gsub("\\..*","",
+    #            list.files(c(week.folder, paste0(folder.info$path, "/originals")))
+    #)))
     #collect the sample names from the /originals folder
-    folder.info$unaligned.samples = sub("-unaligned.bam", "",
+    folder.info$samples = sub("-unaligned.bam", "",
       list.files(paste0(folder.info$path, "/originals"), pattern = ".bam$")
     )
     #check presence of standard files. Returns TRUE or FALSE
@@ -118,7 +126,6 @@ server = function(input, output, session) {
   output$table2 <- renderTable(if(go()){
     tibble("sample" = folder.info$samples) %>%
       mutate(
-        unaligned.bam = checklist(sample %in% folder.info$unaligned.samples),
         bam = checklist(sample %in% folder.info$bam),
         vcf = checklist(sample %in% folder.info$vcf)
       )
