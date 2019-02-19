@@ -1,8 +1,13 @@
+#install.packages(c("shiny", "dplyr", "xtable", "shinyFiles", "stringdist"))
 library(shiny)
 library(dplyr)
 library(xtable) #to make html work in the tables. Doesn't work with xtable::
 #library(shinyFiles) #this library is used, but does not need to be loaded since we only call it via shinyFiles::[function]
 #library(stringdist) #for ClosestMatch2's amatch
+
+#open a browser for the app to be displayed in. URL must be identical to the URL in run.vbs
+browserpath = "C:/Program Files/Internet Explorer/iexplore.exe" #paste0(sub("/Shiny", "", getwd()), "asd")
+browseURL("http://127.0.0.1:7777", browserpath)
 
 ui = fluidPage(
   sidebarLayout(
@@ -38,7 +43,10 @@ ui = fluidPage(
         ),
         tabPanel(
           "HLA plots",
-          tableOutput("hlas")
+          tableOutput("hlas"),
+          uiOutput("sel_hla"),
+          uiOutput("hla_pdf")
+          #tags$iframe(style="height:400px; width:100%; scrolling=yes", src="O:/Transfer/Siebren/neoSeq/HLA/plots/NIC3N-rna_coverage_plot.pdf")
         )
       )
     )
@@ -153,7 +161,7 @@ server = function(input, output, session) {
                   paste0("<font color=orange>", x, "</font>")))
   }
   
-  #overview tab
+  ####### overview tab #######
   output$overview <- renderTable(if(go()){
     tibble("sample" = folder$samples) %>%
       mutate(
@@ -177,7 +185,7 @@ server = function(input, output, session) {
       )
   }, sanitize.text.function = function(x) x) #this line makes HTML work in the table
   
-  #bam tab
+  ####### bam tab #######
   output$bams <- renderTable(if(go()){
     folder$bam %>%
       select(-both) %>%
@@ -187,7 +195,7 @@ server = function(input, output, session) {
       )
   }, sanitize.text.function = function(x) x)
   
-  #vcf tab
+  ####### vcf tab #######
   output$vcfs <- renderTable(if(go()){
     tibble("sample" = folder$samples) %>%
       mutate(
@@ -195,7 +203,7 @@ server = function(input, output, session) {
       )
   }, sanitize.text.function = function(x) x)
   
-  #RNA tab
+  ####### RNA tab #######
   output$rnas <- renderTable(if(go()){
     folder$RNAseq %>%
       select(-both) %>%
@@ -205,7 +213,8 @@ server = function(input, output, session) {
       )
   }, sanitize.text.function = function(x) x)
   
-  #HLA tab
+  ####### HLA tab #######
+  #1) overview table
   output$hlas <- renderTable(if(go()){
     folder$HLA %>%
       select(-both_coverage, -both_rna) %>%
@@ -217,7 +226,25 @@ server = function(input, output, session) {
       )
   }, sanitize.text.function = function(x) x)
   
+  #2) select specific pdf to view for the selected sample
+  output$sel_hla <- renderUI(if(go()){
+    radioButtons(
+      inputId = "sel_hla2",
+      label = "",
+      choices = c("normal coverage", "normal rna", "tumor coverage", "tumor rna"),
+      inline = T
+    )
+  })
   
+  #3) pdf output
+  output$hla_pdf <- renderUI(if(go()){
+    selected_file = paste0(folder$path, "/HLA/plots/", input$sampleselect, sub("normal ", "N", sub("tumor ", "T", sub("rna", "-rna_coverage", sub("coverage", "_coverage", input$sel_hla2)))), "_plot.pdf")
+    if(file.exists(selected_file)){
+      tags$iframe(style="height:600px; width:100%", src=selected_file)
+    } else {
+      "Selected file does not exist."
+    }
+  })
   
   #########################################################
   # Other
