@@ -2,7 +2,8 @@ library(dplyr)
 library(ggplot2)
 # Data handling
 # Hardcoded pep results folder
-pep.info <- list("path" = paste0('O:/ImmunoGenomics/ngsdata', '/results'))
+#pep.info <- list("path" = paste0('O:/ImmunoGenomics/ngsdata', '/results'))
+pep.info <- list("path" = paste0('/mnt/patharchief/ImmunoGenomics/ngsdata', '/results'))
 
 # List all .pep.txt files
 pep.info$samples = list.files(pep.info$path, pattern = "^NIC.*pep.txt$")
@@ -16,9 +17,9 @@ for (i in 1:pep.info$n) {
   
   # Read file and filter by selected & expressed variants
   pepr <- read.table(pep_path, header = TRUE, sep = "\t") %>%
-          select(varID, selection, Expressed, variantTYPE) %>%
+          dplyr::select(varID, selection, Expressed, variantTYPE) %>%
           filter(selection=='yes', Expressed=='yes') %>%
-          select(varID, variantTYPE)
+          dplyr::select(varID, variantTYPE)
 
   # split variantType column values and put them into new rows by varID,
   # then remove duplicates rows (so we don't count more than once for 
@@ -41,7 +42,7 @@ for (i in 1:pep.info$n) {
 
   # count occurrences of each variant type
   pepr_count <- pepr_relevant %>%
-                select(variantTYPE) %>%
+                dplyr::select(variantTYPE) %>%
                 group_by(variantTYPE) %>%
                 mutate(occurrences = n()) %>%
                 unique()
@@ -55,11 +56,21 @@ for (i in 1:pep.info$n) {
   
   variantTYPES_gathered = rbind(variantTYPES_gathered, as_tibble(pepr_count))
 }
+
+subset <- variantTYPES_gathered[!(variantTYPES_gathered$sample %in% c("NIC12", "NIC13")),]
     
-bar_plot <- ggplot(data=variantTYPES_gathered, aes(x=variantTYPE, y=occurrences, fill=sample)) +
+bar_plot <- ggplot(data=subset, aes(x=variantTYPE, y=occurrences, fill=sample)) +
   geom_bar(stat="identity") +
-  theme_minimal()  +
   ylab("Number of Occurrences") +
-  xlab("Variant Type") # + coord_cartesian(ylim = c(0, 750))
+  xlab("Variant Type") +# + coord_cartesian(ylim = c(0, 750)) +
+theme_bw() +  
+  theme(axis.text.x=element_text(angle=90, vjust = 1, size=6),  
+        # remove the vertical grid lines
+        panel.grid.major.x = element_blank(), 
+        panel.spacing = unit(0.02, "lines"),
+        panel.border = element_blank(),
+        strip.text = element_text(size=12))
+#        legend.position="top")
 
 bar_plot
+ggsave("~/Dropbox/Presentations/neoseq/typeVar_Nics_MMRp.jpeg", width = 6, height = 4)
