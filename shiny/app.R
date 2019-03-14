@@ -82,8 +82,8 @@ server = function(input, output, session) {
   
   # 1) create a named list of places where users can start searching
   # roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "O:/Transfer/Siebren/neoSeq")
-  # roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "C:/Users/amfgcpaulo/OneDrive - Universidade de Lisboa/Projects/neoseq_shiny/neoSeq")
-  # roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "C:/Cloud/OneDrive - Universidade de Lisboa/Projects/neoseq_shiny/neoSeq")
+  # roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "C:/Users/amfgcpaulo/OneDrive - Universidade de Lisboa/Projects/neoseq_shiny/example-samples")
+  # roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "C:/Cloud/OneDrive - Universidade de Lisboa/Projects/neoseq_shiny/example-samples")
   roots = c(unique(substr(list.dirs(paste0(LETTERS, ":/"), recursive = F), 1, 3)), getwd(), "O:/ImmunoGenomics/ngsdata")
   names(roots) <- c(roots[1:(length(roots)-2)], getwd(), "demo_location")
   
@@ -297,107 +297,125 @@ server = function(input, output, session) {
     rv$pep.info$samples_sorted <- unique(rv$pep.info$samples[order(temp)])
     
     pep.info$n = length(pep.info$samples_files)
-    cat(file=stderr(), "#### Debug", "pep.info$samples_files is: ", pep.info$samples_files, "\n")
-    cat(file=stderr(), "#### Debug", "rv$pep.info$samples is: ", rv$pep.info$samples, "\n")
+    # cat(file=stderr(), "#### Debug", "pep.info$samples_files is: ", pep.info$samples_files, "\n")
+    # cat(file=stderr(), "#### Debug", "rv$pep.info$samples is: ", rv$pep.info$samples, "\n")
     cat(file=stderr(), "#### Debug", "rv$pep.info$samples_sorted is: ", rv$pep.info$samples_sorted, "\n")
-    cat(file=stderr(), "#### Debug", "pep.info$n is: ", pep.info$n, "\n")
+    # cat(file=stderr(), "#### Debug", "pep.info$n is: ", pep.info$n, "\n")
     
-    variant.data = tibble() # expressed count
-    rv$variantTYPES_gathered <- tibble() # varType count
-    
-    for (i in 1:pep.info$n) {
-      if(i %% 3 == 0){cat(file=stderr(), "#### Debug", "iter ", i, "of pep.info$n", "\n")}
+    if (file.exists("data/rv$variant.gather") && file.exists("data/rv$variantTYPES_gathered")) {
+      cat(file=stderr(), "#### Debug", "RDS files exist, skipping computations", "\n")
       
-      # NOTE: perhaps change blank columns to NA
-      # NOTE: many blank  columns on "Expressed" col
-      pep_path = paste0(pep.info$path, "/", pep.info$samples_files[i])
+      rv$variant.gather <- readRDS("data/rv$variant.gather")
+      rv$variant.gather_filt <- rv$variant.gather
       
+      rv$variantTYPES_gathered <- readRDS(file = "data/rv$variantTYPES_gathered")
+      rv$variantTYPES_gathered_filt <- rv$variantTYPES_gathered
+      
+    } else {
+      cat(file=stderr(), "#### Debug", "RDS files do NOT exist, doing computations", "\n")
+      variant.data = tibble() # expressed count
+      rv$variantTYPES_gathered <- tibble() # varType count
+      
+      for (i in 1:pep.info$n) {
+        if(i %% 3 == 0){cat(file=stderr(), "#### Debug", "iter ", i, "of pep.info$n", "\n")}
+        
+        # NOTE: perhaps change blank columns to NA
+        # NOTE: many blank  columns on "Expressed" col
+        pep_path = paste0(pep.info$path, "/", pep.info$samples_files[i])
+        
+        ## Expressed count
+        # Read file and filter by selected & expressed variants
+        pepr <- read.table(pep_path, header = TRUE, sep = "\t") %>%
+          select(varID, selection, Expressed) %>%
+          unique() %>%
+          filter(selection=='yes')
+        
+        peptide_count_yes = as.numeric(nrow(pepr))
+        peptide_count_expressed = as.numeric(nrow(filter(pepr, Expressed=='yes')))
+        
+        temp = tibble(sample=rv$pep.info$samples[i], variants_selected = peptide_count_yes, variants_expressed = peptide_count_expressed)
+        # temp = tibble(sample=rv$pep.info$samples_sorted[i], variants_selected = peptide_count_yes, variants_expressed = peptide_count_expressed)
+        variant.data = rbind(variant.data, temp)
+        
+        ## Variant Type count
+        expr_pepr <- read.table(pep_path, header = TRUE, sep = "\t") %>%
+          select(varID, selection, Expressed, variantTYPE) %>%
+          filter(selection=='yes', Expressed=='yes') %>%
+          select(varID, variantTYPE)
+        
+        # split variantType column values and put them into new rows by varID,
+        # then remove duplicates rows (so we don't count more than once for
+        # the same variant a given varType)
+        expr_pepr_split <- expr_pepr %>%
+          mutate(variantTYPE = strsplit(as.character(variantTYPE), ",")) %>%
+          tidyr::unnest(variantTYPE) %>%
+          unique()
+        
+        # filter unwanted varType rows
+        expr_pepr_relevant <- expr_pepr_split %>%
+          subset(variantTYPE != 'coding_sequence_variant' &
+                   variantTYPE != 'NMD_transcript_variant'  &
+                   variantTYPE != 'splice_region_variant'   &
+                   variantTYPE != '5_prime_UTR_variant'     &
+                   variantTYPE != '3_prime_UTR_variant'     &
+                   variantTYPE != 'intron_variant'          &
+                   variantTYPE != 'non_coding_transcript_variant' &
+                   variantTYPE != 'non_coding_transcript_exon_variant')
+        
+        # count occurrences of each variant type
+        expr_pepr_count <- expr_pepr_relevant %>%
+          select(variantTYPE) %>%
+          group_by(variantTYPE) %>%
+          mutate(occurrences = n()) %>%
+          unique()
+        
+        # count occurrences of each variant type
+        expr_pepr_count <- expr_pepr_relevant %>%
+          select(variantTYPE) %>%
+          group_by(variantTYPE) %>%
+          mutate(occurrences = n()) %>%
+          unique()
+        
+        # create column with sample name
+        expr_pepr_count$sample <- rep(sub(".25Lpep.txt", "", rv$pep.info$samples[i]), nrow(expr_pepr_count))
+        
+        rv$variantTYPES_gathered = rbind(rv$variantTYPES_gathered, as_tibble(expr_pepr_count))
+      }
+      cat(file=stderr(), "#### Debug", "for loop ended", "ok", "\n")
+ 
       ## Expressed count
-      # Read file and filter by selected & expressed variants
-      pepr <- read.table(pep_path, header = TRUE, sep = "\t") %>%
-        select(varID, selection, Expressed) %>%
-        unique() %>%
-        filter(selection=='yes')
+      rv$variant.gather = variant.data %>%
+        mutate(variants_selected=variants_selected - variants_expressed) %>%
+        tidyr::gather(key="Expressed", value="value", -sample) %>%
+        mutate(Expressed = ifelse(Expressed=="variants_expressed", "Yes", "No"))
+      cat(file=stderr(), "#### Debug", "rv$variant.gather created", "ok", "\n")
       
-      peptide_count_yes = as.numeric(nrow(pepr))
-      peptide_count_expressed = as.numeric(nrow(filter(pepr, Expressed=='yes')))
+      # switch levels order
+      rv$variant.gather$Expressed <- factor(rv$variant.gather$Expressed, levels=c("Yes","No"))
       
-      temp = tibble(sample=rv$pep.info$samples[i], variants_selected = peptide_count_yes, variants_expressed = peptide_count_expressed)
-      # temp = tibble(sample=rv$pep.info$samples_sorted[i], variants_selected = peptide_count_yes, variants_expressed = peptide_count_expressed)
-      variant.data = rbind(variant.data, temp)
+      # expressed count reactive object to be plotted
+      cat(file=stderr(), "#### Debug", "Saving file... ", "\n")
+      saveRDS(rv$variant.gather, file = "data/rv$variant.gather")
+      cat(file=stderr(), "#### Debug", "File saved. ", "\n")
+      rv$variant.gather_filt <- rv$variant.gather
       
-      ## Variant Type count
-      expr_pepr <- read.table(pep_path, header = TRUE, sep = "\t") %>%
-        select(varID, selection, Expressed, variantTYPE) %>%
-        filter(selection=='yes', Expressed=='yes') %>%
-        select(varID, variantTYPE)
-
-      # split variantType column values and put them into new rows by varID,
-      # then remove duplicates rows (so we don't count more than once for
-      # the same variant a given varType)
-      expr_pepr_split <- expr_pepr %>%
-        mutate(variantTYPE = strsplit(as.character(variantTYPE), ",")) %>%
-        tidyr::unnest(variantTYPE) %>%
-        unique()
-
-      # filter unwanted varType rows
-      expr_pepr_relevant <- expr_pepr_split %>%
-        subset(variantTYPE != 'coding_sequence_variant' &
-                 variantTYPE != 'NMD_transcript_variant'  &
-                 variantTYPE != 'splice_region_variant'   &
-                 variantTYPE != '5_prime_UTR_variant'     &
-                 variantTYPE != '3_prime_UTR_variant'     &
-                 variantTYPE != 'intron_variant'          &
-                 variantTYPE != 'non_coding_transcript_variant' &
-                 variantTYPE != 'non_coding_transcript_exon_variant')
-
-      # count occurrences of each variant type
-      expr_pepr_count <- expr_pepr_relevant %>%
-                         select(variantTYPE) %>%
-                         group_by(variantTYPE) %>%
-                         mutate(occurrences = n()) %>%
-                         unique()
-
-      # count occurrences of each variant type
-      expr_pepr_count <- expr_pepr_relevant %>%
-                         select(variantTYPE) %>%
-                         group_by(variantTYPE) %>%
-                         mutate(occurrences = n()) %>%
-                         unique()
-
-      # create column with sample name
-      expr_pepr_count$sample <- rep(sub(".25Lpep.txt", "", rv$pep.info$samples[i]), nrow(expr_pepr_count))
-
-      rv$variantTYPES_gathered = rbind(rv$variantTYPES_gathered, as_tibble(expr_pepr_count))
+      ## varType count reactive object to be plotted
+      saveRDS(rv$variantTYPES_gathered, file = "data/rv$variantTYPES_gathered")
+      rv$variantTYPES_gathered_filt <- rv$variantTYPES_gathered
     }
-    cat(file=stderr(), "#### Debug", "for loop ended", "ok", "\n")
     
-    ## Expressed count
-    rv$variant.gather = variant.data %>%
-      mutate(variants_selected=variants_selected - variants_expressed) %>%
-      tidyr::gather(key="Expressed", value="value", -sample) %>%
-      mutate(Expressed = ifelse(Expressed=="variants_expressed", "Yes", "No"))
-    cat(file=stderr(), "#### Debug", "rv$variant.gather created", "ok", "\n")
-    
-    # switch levels order
-    rv$variant.gather$Expressed <- factor(rv$variant.gather$Expressed, levels=c("Yes","No"))
-    
+    ## Common
     # Sort sample names to achieve a sorted xx axis
-    cat(file=stderr(), "#### Debug", "rv$variant.gather$sample is: ", rv$variant.gather$sample, "\n")
+    # cat(file=stderr(), "#### Debug", "rv$variant.gather$sample is: ", rv$variant.gather$sample, "\n")
     temp <- as.numeric(gsub("NIC","", rv$variant.gather$sample))
-    cat(file=stderr(), "#### Debug", "temp is: ", temp, "\n")
+    # cat(file=stderr(), "#### Debug", "temp is: ", temp, "\n")
     rv$sample_ordered_levels <- unique(rv$variant.gather$sample[order(temp)])
-    cat(file=stderr(), "#### Debug", "ordered levels are: ", rv$sample_ordered_levels,"\n")
+    # cat(file=stderr(), "#### Debug", "ordered levels are: ", rv$sample_ordered_levels,"\n")
     cat(file=stderr(), "#### Debug", "levels for plot created", "ok", "\n")
     
-    # rv$sample_ordered_levels_filt <- rv$sample_ordered_levels
-    rv$variant.gather_filt <- rv$variant.gather
-    
-    cat(file=stderr(), "#### Debug", "Updating checkbox choices...","\n")
-    updateCheckboxGroupInput(session, "checkbox_results", choices = rv$pep.info$samples_sorted, inline = TRUE)
-    
-    ## varType count
-    rv$variantTYPES_gathered_filt <- rv$variantTYPES_gathered
+    updateCheckboxGroupInput(session, "checkbox_results", choices = rv$pep.info$samples_sorted, inline = TRUE, selected = rv$pep.info$samples_sorted )
+    cat(file=stderr(), "#### Debug", "1st update to checkbox choices", "ok", "\n")
+
   })
   
   ## Expressed count
